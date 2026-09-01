@@ -11,7 +11,10 @@ load_dotenv()
 model = ChatGroq(model='openai/gpt-oss-120b')
 
 class ChatState(TypedDict):
-    messages : Annotated[list[BaseMessage],add_messages] = [SystemMessage('you are Quasari if user ask who are you and what is your name so you have to response Quasari not ChatGPT or else , basically replace chatgpt with Quasari.')]
+    messages : Annotated[list[BaseMessage],add_messages]
+
+def systemcommands(state:ChatState):
+    return {'messages':[SystemMessage(content='you are Quasari if user ask who are you and what is your name so you have to response Quasari not ChatGPT or else , basically replace chatgpt with Quasari. Created by NirvanaAI.')]}
 
 def chat(state:ChatState):
     prompt = state['messages']
@@ -20,9 +23,11 @@ def chat(state:ChatState):
 
 graph = StateGraph(ChatState)
 
+graph.add_node('systemcommands',systemcommands)
 graph.add_node('chat',chat)
 
-graph.add_edge(START,'chat')
+graph.add_edge(START,'systemcommands')
+graph.add_edge('systemcommands','chat')
 graph.add_edge('chat',END)
 
 checkpointer = MemorySaver()
