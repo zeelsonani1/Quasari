@@ -3,6 +3,14 @@ from langchain_core.messages import HumanMessage
 from langgraph_backend import workflow
 import uuid
 
+# =========================== Page Config ======================
+
+st.set_page_config(
+    page_title="Quasari",
+    page_icon="logo.png", 
+    # layout="wide"
+)
+
 # =========================== Utility functions ================
 
 def generate_thread():
@@ -40,9 +48,76 @@ add_thread(st.session_state['thread_id'])
 
 # =========================== sidebar ==========================
 
-st.sidebar.title('Quasari')
+st.markdown("""
+<style>
 
-if st.sidebar.button('New Chat'):
+.quasari-title {
+    font-size: 30px;
+    font-weight: 800;
+    padding: 5px 0 20px 0;
+    background: linear-gradient(90deg, #8B5CF6, #22D3EE);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Sidebar title */
+[data-testid="stSidebar"] h1 {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    margin-bottom: 18px;
+
+    background: linear-gradient(90deg, #7C3AED, #22D3EE);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* New Chat button */
+[data-testid="stSidebar"] .stButton > button {
+    width: 100%;
+    border: 1px solid rgba(124, 58, 237, 0.45);
+    border-radius: 12px;
+
+    padding: 10px 16px;
+
+    background: linear-gradient(
+        135deg,
+        rgba(124, 58, 237, 0.18),
+        rgba(34, 211, 238, 0.12)
+    );
+
+    color: white;
+    font-weight: 600;
+    font-size: 15px;
+
+    transition: all 0.25s ease;
+}
+
+/* Hover */
+[data-testid="stSidebar"] .stButton > button:hover {
+    border-color: #22D3EE;
+
+    background: linear-gradient(
+        135deg,
+        rgba(124, 58, 237, 0.35),
+        rgba(34, 211, 238, 0.25)
+    );
+
+    transform: translateY(-1px);
+}
+
+/* Click */
+[data-testid="stSidebar"] .stButton > button:active {
+    transform: scale(0.98);
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+st.sidebar.title("Quasari")
+
+if st.sidebar.button("＋ New Chat"):
     new_chat()
 
 st.sidebar.header('My Conversations')
