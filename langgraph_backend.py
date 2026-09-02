@@ -40,14 +40,9 @@ def title_generate(state:ChatState):
     return {'title':title}
 
 def route(state:ChatState):
-    if not state.get('title') or state.get('title')=='Untitled Chat':
+    if not state.get('title') or state.get('title') == 'Untitled Chat' or len(state.get('messages', [])) <= 6:
         return "title_generate"
-
-    len_msg = len(state.get('messages',[]))
-    if len_msg <= 6:
-        return "title_generate"
-    else:
-        return END
+    return END
 
 graph = StateGraph(ChatState)
 
@@ -57,7 +52,10 @@ graph.add_node('title_generate',title_generate)
 
 graph.add_edge(START,'systemcommands')
 graph.add_edge('systemcommands','chat')
-graph.add_conditional_edges('chat',route)
+graph.add_conditional_edges('chat',route,{
+    "title_generate": "title_generate",
+    END: END
+})
 graph.add_edge('title_generate',END)
 
 conn = sqlite3.connect(database='chatbot.db',check_same_thread=False)
@@ -69,7 +67,7 @@ workflow = graph.compile(checkpointer=checkpointer)
 def load_threads(user_id):
     all_threads = set()
     for check in checkpointer.list(None):
-        full_thread_id = check.config['configurable']['thread_id']
+        full_thread_id = check.config['configurable'].get('thread_id', '')
         
         if full_thread_id.startswith(f"{user_id}:"):
             raw_thread_id = full_thread_id.split(":", 1)[1]
