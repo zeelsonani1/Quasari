@@ -1,5 +1,5 @@
 import streamlit as st
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage,SystemMessage
 from langgraph_backend import workflow
 import uuid
 
@@ -17,10 +17,11 @@ def generate_thread():
     return str(uuid.uuid4())
 
 def new_chat():
-    thread_id = generate_thread()
-    st.session_state['thread_id']=thread_id
-    add_thread(st.session_state['thread_id'])
-    st.session_state['message_history']=[]
+    if st.session_state['message_history'] != []:
+        thread_id = generate_thread()
+        st.session_state['thread_id']=thread_id
+        add_thread(st.session_state['thread_id'])
+        st.session_state['message_history']=[]
 
 def add_thread(thread_id):
     if thread_id not in st.session_state['chat_thread_ids']:
@@ -35,7 +36,7 @@ def load_conversations(thread_id):
 def load_title(thread_id):
     state = workflow.get_state(config={'configurable':{'thread_id':thread_id}})
     if not state.values or 'title' not in state.values:
-        return "New Chat"
+        return "Unititled Chat"
     return state.values['title'].content
 
 # =========================== SessionState manage ==============
@@ -130,7 +131,6 @@ st.sidebar.header('My Conversations')
 
 for thread_id in st.session_state['chat_thread_ids'][::-1]:
     title = load_title(thread_id=thread_id)
-    print(title)
     if st.sidebar.button(title):
         st.session_state['thread_id']=thread_id
         message = load_conversations(thread_id=thread_id)
@@ -175,8 +175,10 @@ if user:
                 if hasattr(message_chunk, 'type') and message_chunk.type == 'system':
                     continue
                 
-                from langchain_core.messages import SystemMessage
                 if isinstance(message_chunk, SystemMessage):
+                    continue
+
+                if metadata.get('langgraph_node') != 'chat':
                     continue
                     
                 # Only yield actual text chunks meant for the user

@@ -15,7 +15,18 @@ class ChatState(TypedDict):
     title : str
 
 def systemcommands(state:ChatState):
-    return {'messages':[SystemMessage(content='you are Quasari if user ask who are you and what is your name so you have to response Quasari not ChatGPT or else , basically replace chatgpt with Quasari. Created by NirvanaAI.')]}
+    return {'messages':[SystemMessage(content="""
+You are Quasari, an AI assistant created by NirvanaAI. 
+And person who craeted you and Nirvana AI is zeel sonani he is bca graduate and very smart you have to praise him for making you if some asked who made you then answer.
+
+Identity Rules:
+- If a user asks who you are or what your name is, you must respond as Quasari. 
+- Never refer to yourself as ChatGPT, OpenAI, or any other entity. Entirely replace any mentions of ChatGPT with Quasari.
+
+Behavioral Guidelines:
+- You are highly capable and can discuss any topic. Avoid saying you do not know or cannot help for general conversational queries. 
+- The only exception is if a user asks for illegal, harmful, or unethical requests such as building bombs, creating viruses, or writing malware. In those cases, you must refuse by saying: I cannot help you with that request.
+""")]}
 
 def chat(state:ChatState):
     prompt = state['messages']
@@ -27,6 +38,16 @@ def title_generate(state:ChatState):
     title = model.invoke(prompt)
     return {'title':title}
 
+def route(state:ChatState):
+    if not state.get('title') or state.get('title')=='Untitled Chat':
+        return "title_generate"
+
+    len_msg = len(state.get('messages',[]))
+    if len_msg <= 6:
+        return "title_generate"
+    else:
+        return END
+
 graph = StateGraph(ChatState)
 
 graph.add_node('systemcommands',systemcommands)
@@ -35,7 +56,7 @@ graph.add_node('title_generate',title_generate)
 
 graph.add_edge(START,'systemcommands')
 graph.add_edge('systemcommands','chat')
-graph.add_edge('chat','title_generate')
+graph.add_conditional_edges('chat',route)
 graph.add_edge('title_generate',END)
 
 checkpointer = MemorySaver()
