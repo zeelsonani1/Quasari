@@ -8,7 +8,7 @@ import uuid
 st.set_page_config(
     page_title="Quasari",
     page_icon="logo.png", 
-    # layout="wide"
+    layout="wide"
 )
 
 # =========================== Utility functions ================
@@ -31,6 +31,12 @@ def load_conversations(thread_id):
     if not state.values or 'messages' not in state.values:
         return []
     return state.values['messages']
+
+def load_title(thread_id):
+    state = workflow.get_state(config={'configurable':{'thread_id':thread_id}})
+    if not state.values or 'title' not in state.values:
+        return "New Chat"
+    return state.values['title'].content
 
 # =========================== SessionState manage ==============
 
@@ -123,7 +129,9 @@ if st.sidebar.button("＋ New Chat"):
 st.sidebar.header('My Conversations')
 
 for thread_id in st.session_state['chat_thread_ids'][::-1]:
-    if st.sidebar.button(thread_id):
+    title = load_title(thread_id=thread_id)
+    print(title)
+    if st.sidebar.button(title):
         st.session_state['thread_id']=thread_id
         message = load_conversations(thread_id=thread_id)
 
