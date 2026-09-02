@@ -41,6 +41,8 @@ def load_title(thread_id):
 
 # =========================== SessionState manage ==============
 
+if 'user_id' not in st.session_state:
+    st.session_state['user_id'] = f"guest_{uuid.uuid4().hex[:8]}"
 
 if 'message_history' not in st.session_state:
     st.session_state['message_history'] = []
@@ -49,7 +51,7 @@ if 'thread_id' not in st.session_state:
     st.session_state['thread_id'] = generate_thread()
 
 if 'chat_thread_ids' not in st.session_state:
-    st.session_state['chat_thread_ids'] = load_threads()
+    st.session_state['chat_thread_ids'] = load_threads(st.session_state['user_id'])
 
 add_thread(st.session_state['thread_id'])
 

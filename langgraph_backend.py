@@ -66,8 +66,13 @@ checkpointer = SqliteSaver(conn)
 
 workflow = graph.compile(checkpointer=checkpointer)
 
-def load_threads():
+def load_threads(user_id):
     all_threads = set()
     for check in checkpointer.list(None):
-        all_threads.add(check.config['configurable']['thread_id'])
+        full_thread_id = check.config['configurable']['thread_id']
+        
+        if full_thread_id.startswith(f"{user_id}:"):
+            raw_thread_id = full_thread_id.split(":", 1)[1]
+            all_threads.add(raw_thread_id)
+            
     return list(all_threads)
