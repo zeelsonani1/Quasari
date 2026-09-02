@@ -2,9 +2,10 @@ from langgraph.graph import StateGraph,START,END
 from langchain_groq import ChatGroq
 from typing import TypedDict, Annotated
 from dotenv import load_dotenv
-from langchain_core.messages import BaseMessage,HumanMessage,SystemMessage
+from langchain_core.messages import BaseMessage,SystemMessage
 from langgraph.graph.message import add_messages
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
+import sqlite3
 
 load_dotenv()
 
@@ -59,6 +60,14 @@ graph.add_edge('systemcommands','chat')
 graph.add_conditional_edges('chat',route)
 graph.add_edge('title_generate',END)
 
-checkpointer = MemorySaver()
+conn = sqlite3.connect(database='chatbot.db',check_same_thread=False)
+
+checkpointer = SqliteSaver(conn)
 
 workflow = graph.compile(checkpointer=checkpointer)
+
+def load_threads():
+    all_threads = set()
+    for check in checkpointer.list(None):
+        all_threads.add(check.config['configurable']['thread_id'])
+    return list(all_threads)

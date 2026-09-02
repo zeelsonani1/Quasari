@@ -1,6 +1,6 @@
 import streamlit as st
 from langchain_core.messages import HumanMessage,SystemMessage
-from langgraph_backend import workflow
+from langgraph_backend import workflow,load_threads
 import uuid
 
 # =========================== Page Config ======================
@@ -49,7 +49,7 @@ if 'thread_id' not in st.session_state:
     st.session_state['thread_id'] = generate_thread()
 
 if 'chat_thread_ids' not in st.session_state:
-    st.session_state['chat_thread_ids'] = []
+    st.session_state['chat_thread_ids'] = load_threads()
 
 add_thread(st.session_state['thread_id'])
 
@@ -150,6 +150,10 @@ for thread_id in st.session_state['chat_thread_ids'][::-1]:
 # =========================== message history load =============
 
 for message in st.session_state['message_history']:
+    if "You are Quasari" in message['content']:
+        continue
+    if message['role'] == 'system':
+        continue
     with st.chat_message(message['role']):
         st.markdown(message['content'])
 
@@ -170,20 +174,29 @@ if user:
         input_data = {'messages': [HumanMessage(content=user)]}
         
         def chunk_generator():
+            seen_message_ids = []
+            current_message_chunks = {}
+            
             for message_chunk, metadata in workflow.stream(input_data, config=CONFIG, stream_mode='messages'):
-
-                if hasattr(message_chunk, 'type') and message_chunk.type == 'system':
-                    continue
-                
-                if isinstance(message_chunk, SystemMessage):
-                    continue
-
                 if metadata.get('langgraph_node') != 'chat':
                     continue
                     
-                # Only yield actual text chunks meant for the user
                 if hasattr(message_chunk, 'content') and message_chunk.content:
-                    yield message_chunk.content
+                    msg_id = getattr(message_chunk, 'id', None) or metadata.get('message_id')
+                    
+                    if msg_id:
+                        if msg_id not in seen_message_ids:
+                            seen_message_ids.append(msg_id)
+                            current_message_chunks[msg_id] = []
+                        
+                        current_message_chunks[msg_id].append(message_chunk.content)
+                        
+                        if msg_id == seen_message_ids[-1] and len(seen_message_ids) > 1:
+                            yield message_chunk.content
+                            
+            if len(seen_message_ids) == 1:
+                for chunk in current_message_chunks[seen_message_ids[0]]:
+                    yield chunk
         ai = st.write_stream(chunk_generator())
-
-    st.session_state['message_history'].append({'role':'ai','content':ai})
+    if ai:
+        st.session_state['message_history'].append({'role':'ai','content':ai})

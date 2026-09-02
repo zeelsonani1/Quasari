@@ -6,8 +6,8 @@
 # --- Databases ---
 # Commented out for now as requested. 
 # Uncomment the line below later when you want Git to ignore your local SQLite file.
-# *.sqlite3
-# *.db
+*.sqlite3
+*.db
 
 # --- Virtual Environments ---
 .venv/
