@@ -2,6 +2,11 @@ import streamlit as st
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph_backend import workflow, load_threads
 import uuid
+from streamlit_local_storage import LocalStorage
+
+
+local_storage = LocalStorage()
+
 
 # =========================== Page Config ======================
 
@@ -58,12 +63,18 @@ if 'user_ids' not in st.session_state:
 
 if 'user' not in st.session_state:
     params = st.query_params
+    stored_uid = local_storage.getItem("quasari_uid")
     if 'uid' in params:
         st.session_state['user'] = params['uid']
+        local_storage.setItem("quasari_uid", params['uid'])
+    elif stored_uid:
+        st.session_state['user'] = stored_uid
+        st.query_params['uid'] = stored_uid
     else:
         new_uid = generate_user()
         st.session_state['user'] = new_uid
         st.query_params['uid'] = new_uid
+        local_storage.setItem("quasari_uid", new_uid)
 
 if 'message_history' not in st.session_state:
     st.session_state['message_history'] = []
@@ -76,6 +87,7 @@ if 'chat_thread_ids' not in st.session_state:
 
 add_thread(st.session_state['thread_id'])
 add_user(st.session_state['user'])
+
 
 # =========================== sidebar ==========================
 
@@ -132,10 +144,8 @@ st.sidebar.header('My Conversations')
 for thread_id in st.session_state['chat_thread_ids'][::-1]:
     compound_key = f"{st.session_state['user']}:{thread_id}"
     
-    # FIX: Pass the compound key to get the correct title from Sqlite
     title = load_title(compound_id=compound_key)
     
-    # FIX: Use key parameter to prevent duplicate button title crashes
     if st.sidebar.button(title, key=f"btn_{thread_id}"):
         st.session_state['thread_id'] = thread_id
         message = load_conversations(compound_id=compound_key)
@@ -162,7 +172,9 @@ for message in st.session_state['message_history']:
 
 # =========================== conversation =====================
 
-CONFIG = {'configurable': {'thread_id': f"{st.session_state['user']}:{st.session_state['thread_id']}"}}
+CONFIG = {'configurable': {'thread_id': f"{st.session_state['user']}:{st.session_state['thread_id']}"},
+          'metadata':{'thread_id':st.session_state['thread_id']},
+          'run_name':['quasari']}
 
 user = st.chat_input('Type Here.')
 
@@ -174,7 +186,6 @@ if user:
     with st.chat_message('ai'):
         input_data = {'messages': [HumanMessage(content=user)]}
         
-        # FIX: Stream block optimized cleanly without breaking on multi-turn counts
         def chunk_generator():
             for message_chunk, metadata in workflow.stream(input_data, config=CONFIG, stream_mode='messages'):
                 if metadata.get('langgraph_node') != 'chat':
@@ -186,6 +197,4 @@ if user:
         
     if ai:
         st.session_state['message_history'].append({'role': 'ai', 'content': ai})
-        # Empty execution triggers conditional routing path logic to update titles cleanly
-        workflow.invoke({'messages': []}, config=CONFIG)
         st.rerun()

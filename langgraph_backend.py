@@ -40,8 +40,11 @@ def title_generate(state:ChatState):
     return {'title':title}
 
 def route(state:ChatState):
-    if not state.get('title') or state.get('title') == 'Untitled Chat' or len(state.get('messages', [])) <= 6:
+    if not state.get('title') or state.get('title') == 'Untitled Chat':
         return "title_generate"
+    if len(state.get('messages', [])) <=4:
+        return "title_generate"
+
     return END
 
 graph = StateGraph(ChatState)
