@@ -3,7 +3,8 @@ langchain
 langchain-core
 langchain-groq
 langgraph
-python-dotenv
 langgraph-checkpoint-sqlite
+langchain-community
+duckduckgo-search
+python-dotenv
 streamlit-local-storage
-langchain_community
