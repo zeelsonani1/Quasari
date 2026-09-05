@@ -1,3 +1,5 @@
+# langgraph_backend.py
+
 import sqlite3
 from typing import TypedDict, Annotated
 
@@ -6,243 +8,381 @@ from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.messages import (
     BaseMessage,
-    HumanMessage,
     SystemMessage,
+    HumanMessage,
 )
 from langchain_core.tools import tool
+
 from langchain_community.tools import DuckDuckGoSearchRun
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
+from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+
+# ============================================================
+# ENVIRONMENT
+# ============================================================
 
 load_dotenv()
 
 
-# =========================================================
+# ============================================================
 # MODEL
-# =========================================================
+# ============================================================
+
+MAX_OUTPUT_TOKENS = 2000
 
 model = ChatGroq(
-    model="openai/gpt-oss-120b"
+    model="openai/gpt-oss-120b",
+    max_tokens=MAX_OUTPUT_TOKENS,
 )
 
+model_with_tools = None
 
-# =========================================================
+
+# ============================================================
 # SYSTEM PROMPT
-# =========================================================
+# ============================================================
 
 SYSTEM_PROMPT = """
-You are Quasari, an AI assistant created by NirvanaAI.
+You are Quasari, a helpful AI assistant.
 
-Your creator is Zeel Sonani, a BCA graduate.
-
-Identity:
-- If asked who you are, say you are Quasari.
-- Never identify yourself as ChatGPT or OpenAI.
-
-Behavior:
-- Be helpful, friendly and conversational.
-- Give clear and useful answers.
-- For illegal, harmful, or unethical requests, refuse briefly.
+Your job is to:
+- Give accurate and useful answers.
+- Explain concepts clearly.
+- Adapt explanations to the user's level.
+- Use concise answers when the question is simple.
+- Give detailed explanations when necessary.
+- Use tools when current information is required.
+- Never pretend to know something you do not know.
 """
 
 
-# =========================================================
+# ============================================================
 # STATE
-# =========================================================
+# ============================================================
 
 class ChatState(TypedDict):
-
-    messages: Annotated[
-        list[BaseMessage],
-        add_messages
-    ]
-
+    messages: Annotated[list[BaseMessage], add_messages]
     title: str
 
 
-# =========================================================
-# TOOLS
-# =========================================================
+# ============================================================
+# SEARCH TOOL
+# ============================================================
 
 search_engine = DuckDuckGoSearchRun()
 
 
-@tool
+@tool("duckduckgo_search")
 def duckduckgo_search(query: str) -> str:
     """
-    Search the web for current or up-to-date information.
+    Search the web using DuckDuckGo.
     """
     return search_engine.run(query)
 
 
-tools = [
-    duckduckgo_search
-]
+tools = [duckduckgo_search]
 
 model_with_tools = model.bind_tools(tools)
 
 
-# =========================================================
-# CHAT
-# =========================================================
+# ============================================================
+# TOKEN ESTIMATION
+# ============================================================
 
-def chat(state: ChatState):
+def estimate_tokens(text: str) -> int:
+    """
+    Rough token estimation.
 
-    messages = state["messages"]
+    This is intentionally an approximation.
+    Roughly 4 characters ~= 1 token for normal English text.
+    """
 
-    # -----------------------------------------------------
-    # Keep context manageable
-    # -----------------------------------------------------
+    if not text:
+        return 0
 
-    if len(messages) > 12:
+    return max(1, len(text) // 4)
 
-        old_messages = messages[:-8]
-        recent_messages = messages[-8:]
 
-        history_text = "\n".join(
-            f"{type(message).__name__}: {message.content}"
-            for message in old_messages
-            if message.content
-        )
+def estimate_message_tokens(messages: list[BaseMessage]) -> int:
+    total = 0
 
-        summary_prompt = f"""
-Summarize the previous conversation.
+    for message in messages:
+        if message.content:
+            total += estimate_tokens(str(message.content))
+
+    return total
+
+
+# ============================================================
+# CONVERSATION SUMMARIZATION
+# ============================================================
+
+def summarize_history(messages: list[BaseMessage]) -> str:
+
+    history_text = "\n".join(
+        f"{type(message).__name__}: {message.content}"
+        for message in messages
+        if message.content
+    )
+
+    summary_prompt = f"""
+Summarize the following conversation.
 
 Keep:
-- important facts
-- user preferences
-- decisions
-- important context
-- important questions
+- Important user information
+- Important decisions
+- Previous questions
+- Important technical details
+- Context needed to answer future questions
 
-Be concise.
+Remove:
+- Repetition
+- Unnecessary wording
+- Small talk
 
-Previous conversation:
+Conversation:
 
 {history_text}
 """
 
-        summary = model.invoke([
-            HumanMessage(content=summary_prompt)
-        ]).content
+    summary = model.invoke(
+        [HumanMessage(content=summary_prompt)]
+    )
 
-        payload = [
-            SystemMessage(
-                content=f"""
-{SYSTEM_PROMPT}
+    return str(summary.content)
 
-Previous conversation summary:
-{summary}
-"""
-            )
-        ]
 
-        payload.extend(recent_messages)
+# ============================================================
+# CHAT NODE
+# ============================================================
+
+def chat(state: ChatState):
+
+    history = state["messages"]
+
+    # --------------------------------------------------------
+    # Context management
+    # --------------------------------------------------------
+
+    # Keep conversation reasonably small.
+    #
+    # IMPORTANT:
+    # This is an application-level safety limit.
+    # It prevents us from sending an enormous conversation
+    # to the API.
+    #
+    if len(history) > 12:
+
+        old_messages = history[:-8]
+        recent_messages = history[-8:]
+
+        try:
+
+            summary = summarize_history(old_messages)
+
+            payload = [
+                SystemMessage(content=SYSTEM_PROMPT),
+                SystemMessage(
+                    content=(
+                        "Summary of the earlier conversation:\n"
+                        + summary
+                    )
+                ),
+                *recent_messages,
+            ]
+
+        except Exception:
+
+            # If summarization itself fails,
+            # fall back to recent messages.
+
+            payload = [
+                SystemMessage(content=SYSTEM_PROMPT),
+                *recent_messages,
+            ]
 
     else:
 
         payload = [
-            SystemMessage(
-                content=SYSTEM_PROMPT
-            )
+            SystemMessage(content=SYSTEM_PROMPT),
+            *history,
         ]
 
-        payload.extend(messages)
+    # --------------------------------------------------------
+    # Token safety check
+    # --------------------------------------------------------
+
+    input_tokens = estimate_message_tokens(payload)
+
+    # Leave room for the model's answer.
+    #
+    # This number is intentionally conservative.
+    MAX_INPUT_TOKENS = 10000
+
+    if input_tokens > MAX_INPUT_TOKENS:
+
+        # Try using only the most recent messages.
+
+        recent_messages = history[-4:]
+
+        payload = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            *recent_messages,
+        ]
+
+        input_tokens = estimate_message_tokens(payload)
+
+        if input_tokens > MAX_INPUT_TOKENS:
+
+            raise RuntimeError(
+                "CONTEXT_LIMIT_REACHED"
+            )
+
+    # --------------------------------------------------------
+    # Model call
+    # --------------------------------------------------------
+
+    try:
+
+        response = model_with_tools.invoke(payload)
+
+        return {
+            "messages": [response]
+        }
+
+    except Exception as e:
+
+        error_text = str(e).lower()
+
+        # ----------------------------------------------------
+        # Rate limit / API limit
+        # ----------------------------------------------------
+
+        if (
+            "rate limit" in error_text
+            or "429" in error_text
+            or "too many requests" in error_text
+            or "quota" in error_text
+        ):
+
+            raise RuntimeError(
+                "API_LIMIT_REACHED"
+            ) from e
+
+        # ----------------------------------------------------
+        # Context/token limit
+        # ----------------------------------------------------
+
+        if (
+            "token" in error_text
+            or "context" in error_text
+            or "maximum" in error_text
+        ):
+
+            raise RuntimeError(
+                "CONTEXT_LIMIT_REACHED"
+            ) from e
+
+        # ----------------------------------------------------
+        # Unknown error
+        # ----------------------------------------------------
+
+        raise RuntimeError(
+            "MODEL_ERROR"
+        ) from e
 
 
-    response = model_with_tools.invoke(payload)
-
-    return {
-        "messages": [response]
-    }
-
-
-# =========================================================
-# TITLE GENERATOR
-# =========================================================
+# ============================================================
+# TITLE GENERATION
+# ============================================================
 
 def title_generate(state: ChatState):
 
     messages = state["messages"]
 
-    conversation = "\n".join(
+    clean_messages = "\n".join(
         f"{type(message).__name__}: {message.content}"
         for message in messages
-        if not isinstance(message, SystemMessage)
-        and message.content
+        if message.content
     )
 
     prompt = f"""
 Create a short title for this conversation.
 
 Rules:
-- 3 to 5 words
-- Only output the title
+- Maximum 6 words
 - No quotation marks
-- Don't write "Chat Title:"
-- If the conversation is only greetings, use "Greeting"
-- Focus on the main topic
+- No punctuation at the end
+- Describe the main topic
+- Do not say "Chat" or "Conversation"
 
 Conversation:
 
-{conversation}
+{clean_messages}
 """
 
-    title = model.invoke([
-        HumanMessage(content=prompt)
-    ]).content.strip()
+    try:
 
-    return {
-        "title": title
-    }
+        result = model.invoke(
+            [HumanMessage(content=prompt)]
+        )
+
+        title = str(result.content).strip()
+
+        if not title:
+            title = "New Chat"
+
+        return {
+            "title": title
+        }
+
+    except Exception:
+
+        return {
+            "title": "New Chat"
+        }
 
 
-# =========================================================
+# ============================================================
 # ROUTER
-# =========================================================
+# ============================================================
 
 def route(state: ChatState):
 
-    messages = state["messages"]
+    last_message = state["messages"][-1]
 
-    last_message = messages[-1]
-
-    # -----------------------------------------------------
+    # --------------------------------------------------------
     # Tool call
-    # -----------------------------------------------------
+    # --------------------------------------------------------
 
     if getattr(last_message, "tool_calls", None):
 
         return "tools"
 
+    # --------------------------------------------------------
+    # Generate title only once
+    # --------------------------------------------------------
 
-    # -----------------------------------------------------
-    # Generate title once
-    # -----------------------------------------------------
+    title = state.get("title")
 
-    if not state.get("title"):
+    if not title or title == "Untitled Chat":
 
-        human_messages = [
-            message
-            for message in messages
-            if isinstance(message, HumanMessage)
-        ]
+        return "title_generate"
 
-        if human_messages:
-
-            return "title_generate"
-
+    # --------------------------------------------------------
+    # Normal conversation finished
+    # --------------------------------------------------------
 
     return END
 
 
-# =========================================================
+# ============================================================
 # GRAPH
-# =========================================================
+# ============================================================
 
 graph = StateGraph(ChatState)
 
@@ -263,13 +403,16 @@ graph.add_node(
 )
 
 
+# START → CHAT
+
 graph.add_edge(
     START,
     "chat"
 )
 
 
-# ONE router only
+# CHAT → TOOL / TITLE / END
+
 graph.add_conditional_edges(
     "chat",
     route,
@@ -281,11 +424,15 @@ graph.add_conditional_edges(
 )
 
 
+# TOOL → CHAT
+
 graph.add_edge(
     "tools",
     "chat"
 )
 
+
+# TITLE → END
 
 graph.add_edge(
     "title_generate",
@@ -293,9 +440,9 @@ graph.add_edge(
 )
 
 
-# =========================================================
-# DATABASE
-# =========================================================
+# ============================================================
+# SQLITE CHECKPOINTER
+# ============================================================
 
 conn = sqlite3.connect(
     "chatbot.db",
@@ -310,31 +457,37 @@ workflow = graph.compile(
 )
 
 
-# =========================================================
+# ============================================================
 # LOAD USER THREADS
-# =========================================================
+# ============================================================
 
-def load_threads(user_id):
+def load_threads(user_id: str):
 
-    threads = set()
+    all_threads = set()
 
-    for checkpoint in checkpointer.list(None):
+    for check in checkpointer.list(None):
 
-        config = checkpoint.config
-
-        thread_id = (
-            config
-            .get("configurable", {})
-            .get("thread_id", "")
+        config = check.config.get(
+            "configurable",
+            {}
         )
 
-        if thread_id.startswith(f"{user_id}:"):
+        full_thread_id = config.get(
+            "thread_id",
+            ""
+        )
 
-            raw_thread_id = thread_id.split(
+        if full_thread_id.startswith(
+            f"{user_id}:"
+        ):
+
+            raw_thread_id = full_thread_id.split(
                 ":",
                 1
             )[1]
 
-            threads.add(raw_thread_id)
+            all_threads.add(
+                raw_thread_id
+            )
 
-    return list(threads)
+    return list(all_threads)
