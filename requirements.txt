@@ -5,6 +5,6 @@ langchain-groq
 langgraph
 langgraph-checkpoint-sqlite
 langchain-community
-duckduckgo-search
+ddgs
 python-dotenv
 streamlit-local-storage
