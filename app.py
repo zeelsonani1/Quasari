@@ -1,200 +1,552 @@
+import uuid
+
 import streamlit as st
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph_backend import workflow, load_threads
-import uuid
 from streamlit_local_storage import LocalStorage
 
+from langgraph_backend import (
+    workflow,
+    load_threads,
+)
+
+
+# =========================================================
+# PAGE
+# =========================================================
+
+st.set_page_config(
+    page_title="Quasari",
+    page_icon="logo.png",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
+# =========================================================
+# LOCAL STORAGE
+# =========================================================
 
 local_storage = LocalStorage()
 
 
-# =========================== Page Config ======================
+# =========================================================
+# HELPERS
+# =========================================================
 
-st.set_page_config(
-    page_title="Quasari",
-    page_icon="logo.png", 
-    layout="wide"
-)
+def generate_user_id():
 
-# =========================== Utility functions ================
+    return f"guest_{uuid.uuid4().hex}"
 
-def generate_user():
-    uid = f"guest_{uuid.uuid4().hex[:8]}"
-    return uid
 
-def add_user(user):
-    if user not in st.session_state['user_ids']:
-        st.session_state['user_ids'].append(user)
+def generate_thread_id():
 
-def generate_thread():
     return str(uuid.uuid4())
 
-def new_chat():
-    if st.session_state.get('message_history', []) != []:
-        thread_id = generate_thread()
-        st.session_state['thread_id'] = thread_id
-        add_thread(thread_id)
-        st.session_state['message_history'] = []
-        st.rerun()
 
-def add_thread(thread_id):
-    if thread_id not in st.session_state['chat_thread_ids']:
-        st.session_state['chat_thread_ids'].append(thread_id)
+def get_compound_thread_id(thread_id):
 
-def load_conversations(compound_id):
-    state = workflow.get_state(config={'configurable': {'thread_id': compound_id}})
-    if not state.values or 'messages' not in state.values:
-        return []
-    return state.values['messages']
+    return (
+        f"{st.session_state.user_id}:"
+        f"{thread_id}"
+    )
 
-def load_title(compound_id):
-    state = workflow.get_state(config={'configurable': {'thread_id': compound_id}})
-    if not state.values or 'title' not in state.values:
-        return "Untitled Chat"
-    
-    # Handle both string titles and message-object types securely
-    title_obj = state.values['title']
-    return title_obj.content if hasattr(title_obj, 'content') else str(title_obj)
 
-# =========================== SessionState manage ==============
+def get_config(thread_id=None):
 
-if 'user_ids' not in st.session_state:
-    st.session_state['user_ids'] = []
+    if thread_id is None:
+        thread_id = st.session_state.thread_id
 
-if 'user' not in st.session_state:
-    params = st.query_params
-    stored_uid = local_storage.getItem("quasari_uid")
-    if 'uid' in params:
-        st.session_state['user'] = params['uid']
-        local_storage.setItem("quasari_uid", params['uid'])
-    elif stored_uid:
-        st.session_state['user'] = stored_uid
-        st.query_params['uid'] = stored_uid
+    return {
+        "configurable": {
+            "thread_id": get_compound_thread_id(
+                thread_id
+            )
+        },
+        "metadata": {
+            "user_id": st.session_state.user_id,
+            "thread_id": thread_id,
+        },
+    }
+
+
+# =========================================================
+# USER ID
+# =========================================================
+
+def initialize_user():
+
+    # Already initialized in this Streamlit session
+    if "user_id" in st.session_state:
+        return
+
+
+    # Try browser localStorage
+    stored_user = local_storage.getItem(
+        "quasari_user_id"
+    )
+
+
+    if stored_user:
+
+        st.session_state.user_id = stored_user
+
     else:
-        new_uid = generate_user()
-        st.session_state['user'] = new_uid
-        st.query_params['uid'] = new_uid
-        local_storage.setItem("quasari_uid", new_uid)
 
-if 'message_history' not in st.session_state:
-    st.session_state['message_history'] = []
+        new_user = generate_user_id()
 
-if 'thread_id' not in st.session_state:
-    st.session_state['thread_id'] = generate_thread()
+        st.session_state.user_id = new_user
 
-if 'chat_thread_ids' not in st.session_state:
-    st.session_state['chat_thread_ids'] = load_threads(st.session_state['user'])
-
-add_thread(st.session_state['thread_id'])
-add_user(st.session_state['user'])
+        local_storage.setItem(
+            "quasari_user_id",
+            new_user
+        )
 
 
-# =========================== sidebar ==========================
+# =========================================================
+# THREAD
+# =========================================================
 
-st.markdown("""
+def initialize_thread():
+
+    if "thread_id" not in st.session_state:
+
+        st.session_state.thread_id = (
+            generate_thread_id()
+        )
+
+
+def initialize_history():
+
+    if "message_history" not in st.session_state:
+
+        st.session_state.message_history = []
+
+
+def initialize_threads():
+
+    if "chat_thread_ids" not in st.session_state:
+
+        st.session_state.chat_thread_ids = (
+            load_threads(
+                st.session_state.user_id
+            )
+        )
+
+
+# =========================================================
+# LOAD CHAT
+# =========================================================
+
+def load_conversation(thread_id):
+
+    state = workflow.get_state(
+        get_config(thread_id)
+    )
+
+    if not state.values:
+
+        return []
+
+    return state.values.get(
+        "messages",
+        []
+    )
+
+
+def load_title(thread_id):
+
+    state = workflow.get_state(
+        get_config(thread_id)
+    )
+
+    if not state.values:
+
+        return "New Chat"
+
+    title = state.values.get("title")
+
+    if not title:
+
+        return "New Chat"
+
+    return str(title)
+
+
+# =========================================================
+# UI MESSAGES
+# =========================================================
+
+def convert_messages(messages):
+
+    result = []
+
+    for message in messages:
+
+        if isinstance(
+            message,
+            SystemMessage
+        ):
+            continue
+
+        if isinstance(
+            message,
+            HumanMessage
+        ):
+            role = "user"
+        else:
+            role = "assistant"
+
+
+        content = message.content
+
+        if isinstance(content, list):
+
+            content = "\n".join(
+                str(item)
+                for item in content
+            )
+
+
+        result.append({
+            "role": role,
+            "content": content,
+        })
+
+    return result
+
+
+# =========================================================
+# NEW CHAT
+# =========================================================
+
+def new_chat():
+
+    st.session_state.thread_id = (
+        generate_thread_id()
+    )
+
+    st.session_state.message_history = []
+
+    st.rerun()
+
+
+# =========================================================
+# OPEN CHAT
+# =========================================================
+
+def open_chat(thread_id):
+
+    st.session_state.thread_id = thread_id
+
+    messages = load_conversation(
+        thread_id
+    )
+
+    st.session_state.message_history = (
+        convert_messages(messages)
+    )
+
+    st.rerun()
+
+
+# =========================================================
+# INITIALIZATION
+# =========================================================
+
+initialize_user()
+initialize_thread()
+initialize_history()
+initialize_threads()
+
+
+# =========================================================
+# CSS
+# =========================================================
+
+st.markdown(
+    """
 <style>
-.quasari-title {
-    font-size: 30px;
-    font-weight: 800;
-    padding: 5px 0 20px 0;
-    background: linear-gradient(90deg, #8B5CF6, #22D3EE);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 5rem;
+    max-width: 1100px;
 }
-/* Sidebar title */
+
+
+/* Sidebar */
+
+[data-testid="stSidebar"] {
+    border-right: 1px solid rgba(128,128,128,0.15);
+}
+
+
 [data-testid="stSidebar"] h1 {
+
     font-size: 28px;
     font-weight: 800;
-    letter-spacing: 0.5px;
-    margin-bottom: 18px;
-    background: linear-gradient(90deg, #7C3AED, #22D3EE);
+
+    background: linear-gradient(
+        90deg,
+        #8B5CF6,
+        #22D3EE
+    );
+
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
 }
-/* New Chat button */
-[data-testid="stSidebar"] .stButton > button {
+
+
+[data-testid="stSidebar"] .stButton button {
+
     width: 100%;
-    border: 1px solid rgba(124, 58, 237, 0.45);
-    border-radius: 12px;
-    padding: 10px 16px;
-    background: linear-gradient(135deg, rgba(124, 58, 237, 0.18), rgba(34, 211, 238, 0.12));
-    color: white;
-    font-weight: 600;
-    font-size: 15px;
-    transition: all 0.25s ease;
+    border-radius: 10px;
+
+    border: 1px solid rgba(
+        124,
+        58,
+        237,
+        0.25
+    );
+
+    transition: 0.2s ease;
 }
-[data-testid="stSidebar"] .stButton > button:hover {
+
+
+[data-testid="stSidebar"] .stButton button:hover {
+
     border-color: #22D3EE;
-    background: linear-gradient(135deg, rgba(124, 58, 237, 0.35), rgba(34, 211, 238, 0.25));
     transform: translateY(-1px);
 }
-[data-testid="stSidebar"] .stButton > button:active {
-    transform: scale(0.98);
+
+
+/* Chat input */
+
+[data-testid="stChatInput"] {
+
+    border-radius: 16px;
 }
+
+
+/* Chat messages */
+
+[data-testid="stChatMessage"] {
+
+    border-radius: 14px;
+}
+
+
+/* Empty screen */
+
+.quasari-home {
+
+    text-align: center;
+    padding-top: 15vh;
+}
+
+
+.quasari-logo {
+
+    font-size: 58px;
+    font-weight: 900;
+
+    background: linear-gradient(
+        90deg,
+        #8B5CF6,
+        #22D3EE
+    );
+
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+
+.quasari-subtitle {
+
+    font-size: 18px;
+    opacity: 0.65;
+}
+
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
+
+
+# =========================================================
+# SIDEBAR
+# =========================================================
 
 st.sidebar.title("Quasari")
 
-if st.sidebar.button("＋ New Chat"):
+
+if st.sidebar.button(
+    "＋  New Chat",
+    use_container_width=True,
+):
+
     new_chat()
 
-st.sidebar.header('My Conversations')
 
-for thread_id in st.session_state['chat_thread_ids'][::-1]:
-    compound_key = f"{st.session_state['user']}:{thread_id}"
-    
-    title = load_title(compound_id=compound_key)
-    
-    if st.sidebar.button(title, key=f"btn_{thread_id}"):
-        st.session_state['thread_id'] = thread_id
-        message = load_conversations(compound_id=compound_key)
+st.sidebar.divider()
 
-        temp_messages = []
-        for msg in message:
-            if isinstance(msg, SystemMessage):
-                continue
-            role = 'user' if isinstance(msg, HumanMessage) else 'ai'
-            temp_messages.append({'role': role, 'content': msg.content})
+st.sidebar.subheader(
+    "Conversations"
+)
 
-        st.session_state['message_history'] = temp_messages
-        st.rerun()
 
-# =========================== message history load =============
+for thread_id in reversed(
+    st.session_state.chat_thread_ids
+):
 
-for message in st.session_state['message_history']:
-    if "You are Quasari" in message['content']:
-        continue
-    if message['role'] == 'system':
-        continue
-    with st.chat_message(message['role']):
-        st.markdown(message['content'])
+    title = load_title(thread_id)
 
-# =========================== conversation =====================
+    if st.sidebar.button(
+        title,
+        key=f"thread_{thread_id}",
+        use_container_width=True,
+    ):
 
-CONFIG = {'configurable': {'thread_id': f"{st.session_state['user']}:{st.session_state['thread_id']}"},
-          'metadata':{'thread_id':st.session_state['thread_id']},
-          'run_name':['quasari']}
+        open_chat(thread_id)
 
-user = st.chat_input('Type Here.')
 
-if user:
-    st.session_state['message_history'].append({'role': 'user', 'content': user})
-    with st.chat_message('user'):
-        st.markdown(user)
+# =========================================================
+# HOME SCREEN
+# =========================================================
 
-    with st.chat_message('ai'):
-        input_data = {'messages': [HumanMessage(content=user)]}
-        
-        def chunk_generator():
-            for message_chunk, metadata in workflow.stream(input_data, config=CONFIG, stream_mode='messages'):
-                if metadata.get('langgraph_node') != 'chat':
+if not st.session_state.message_history:
+
+    st.markdown(
+        """
+<div class="quasari-home">
+
+<div class="quasari-logo">
+Quasari
+</div>
+
+<div class="quasari-subtitle">
+Your AI assistant
+</div>
+
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+# =========================================================
+# HISTORY
+# =========================================================
+
+for message in (
+    st.session_state.message_history
+):
+
+    with st.chat_message(
+        message["role"]
+    ):
+
+        st.markdown(
+            message["content"]
+        )
+
+
+# =========================================================
+# CHAT INPUT
+# =========================================================
+
+prompt = st.chat_input(
+    "Message Quasari..."
+)
+
+
+if prompt:
+
+    # -----------------------------------------------------
+    # USER
+    # -----------------------------------------------------
+
+    st.session_state.message_history.append({
+        "role": "user",
+        "content": prompt,
+    })
+
+
+    with st.chat_message("user"):
+
+        st.markdown(prompt)
+
+
+    # -----------------------------------------------------
+    # AI
+    # -----------------------------------------------------
+
+    with st.chat_message("assistant"):
+
+        def response_generator():
+
+            input_data = {
+                "messages": [
+                    HumanMessage(
+                        content=prompt
+                    )
+                ]
+            }
+
+
+            for chunk, metadata in workflow.stream(
+                input_data,
+                config=get_config(),
+                stream_mode="messages",
+            ):
+
+                if (
+                    metadata.get(
+                        "langgraph_node"
+                    )
+                    != "chat"
+                ):
                     continue
-                if hasattr(message_chunk, 'content') and message_chunk.content:
-                    yield message_chunk.content
 
-        ai = st.write_stream(chunk_generator())
-        
-    if ai:
-        st.session_state['message_history'].append({'role': 'ai', 'content': ai})
+
+                content = getattr(
+                    chunk,
+                    "content",
+                    None
+                )
+
+
+                if content:
+
+                    yield content
+
+
+        response = st.write_stream(
+            response_generator()
+        )
+
+
+    # -----------------------------------------------------
+    # SAVE UI HISTORY
+    # -----------------------------------------------------
+
+    if response:
+
+        st.session_state.message_history.append({
+            "role": "assistant",
+            "content": response,
+        })
+
+
+        # Add thread after first successful message
+        if (
+            st.session_state.thread_id
+            not in st.session_state.chat_thread_ids
+        ):
+
+            st.session_state.chat_thread_ids.append(
+                st.session_state.thread_id
+            )
+
+
         st.rerun()
